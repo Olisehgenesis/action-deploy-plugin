@@ -120,6 +120,8 @@ runs:
             await fs.writeFile(manifestPath, updatedManifest, 'utf8');
           }
 
+          await updateManifest();
+
     - name: Format manifest using Prettier
       shell: bash
       run: |
@@ -127,41 +129,34 @@ runs:
         yarn prettier --write .
 
     - name: Get GitHub App token
-      if: env.APP_ID != '' && env.APP_PRIVATE_KEY != ''
       uses: tibdex/github-app-token@v1.7.0
       id: get_installation_token
       with:
-        app_id: ${{ env.APP_ID }}
-        private_key: ${{ env.APP_PRIVATE_KEY }}
+        app_id: ${{ secrets.APP_ID }}
+        private_key: ${{ secrets.APP_PRIVATE_KEY }}
+
+    - name: Import GPG key
+      uses: crazy-max/ghaction-import-gpg@v5
+      with:
+        gpg_private_key: ${{ secrets.GPG_PRIVATE_KEY }}
+        passphrase: ${{ secrets.GPG_PASSPHRASE }}
+        git_user_signingkey: true
+        git_commit_gpgsign: true
 
     - name: Commit and Push changes
       shell: bash
       env:
-        GITHUB_TOKEN: ${{ steps.get_installation_token.outputs.token || github.token }}
+        GITHUB_TOKEN: ${{ steps.get_installation_token.outputs.token }}
       run: |
-        app_token="${{ steps.get_installation_token.outputs.token }}" # Assuming this outputs your app token
-        
-        user_info=$(curl -s -H "Authorization: token $app_token" https://api.github.com/user)
-        
-        user_name=$(echo "$user_info" | jq -r .name)
-        user_email=$(echo "$user_info" | jq -r .email)
-        
-        if [ "$user_email" == "null" ]; then
-          user_email="ubiquity-os[bot]@users.noreply.github.com"
-          user_name="ubiquity-os[bot]"
-        fi
-        
-        # Configure Git with the retrieved user information
-        git config --global user.name "$user_name"
-        git config --global user.email "$user_email"
-        git remote set-url origin https://${{ env.GITHUB_TOKEN }}@github.com/${{ github.repository }}.git
+        git config --global user.name "GitHub App Bot"
+        git config --global user.email "bot@example.com"
+        git remote set-url origin https://x-access-token:${GITHUB_TOKEN}@github.com/${{ github.repository }}.git
         
         git add "${{ inputs.manifestPath }}"
-        git add -f ${{ github.workspace }}/dist/\*
+        git add -f ${{ github.workspace }}/dist/*
         if [ -n "$(git diff-index --cached --name-only HEAD)" ]; then
-          git commit -m "${{ inputs.commitMessage }}" || echo "Commit failed"
-          # Attempt to pull and resolve conflicts
-          git pull origin ${{ github.ref_name }} || {
+          git commit -S -m "${{ inputs.commitMessage }}" || echo "Commit failed"
+          git pull --rebase origin ${{ github.ref_name }} || {
             echo "Rebase failed, force pushing changes."
             git push --force origin HEAD:${{ github.ref_name }}
             exit 0
